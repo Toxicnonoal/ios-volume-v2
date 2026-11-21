@@ -29,7 +29,7 @@ object VolumeInjector {
     private const val SLIDE_DP = 14f      // slide distance on show/hide (towards the left edge)
     private const val Y_SHIFT_DP = 36f    // iOS HUD sits slightly above the vertical center
 
-    private lateinit var app: Application
+    private lateinit var app: Context
     private lateinit var wm: WindowManager
     private lateinit var audio: AudioManager
     private lateinit var pill: PillView
@@ -66,7 +66,7 @@ object VolumeInjector {
 
     private fun dp(v: Float): Int = (v * app.resources.displayMetrics.density).toInt()
 
-    fun init(application: Application) {
+    fun init(application: Context) {
         if (ready) return
         try {
             app = application
@@ -93,6 +93,7 @@ object VolumeInjector {
             XposedBridge.log("iOSVolume: injector ready")
         } catch (t: Throwable) {
             XposedBridge.log("iOSVolume: init failed: $t")
+            XposedBridge.log(t)
         }
     }
 

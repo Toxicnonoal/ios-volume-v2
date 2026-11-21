@@ -1,6 +1,6 @@
 package app.iosvolume.module
 
-import android.app.Application
+import android.content.Context
 import android.app.Dialog
 import android.os.Handler
 import android.os.Looper
@@ -48,10 +48,15 @@ class MainHook : IXposedHookLoadPackage {
                             val type = try { dialog.window?.attributes?.type } catch (e: Throwable) { null }
                             logOnce("dialog ${dialog.javaClass.name} type=$type")
                             if (!isVolumeName(dialog.javaClass.name) && type != 2020) return
-                            val app = dialog.context.applicationContext as? Application ?: return
+                            logOnce("volume dialog matched: ${dialog.javaClass.name}")
+                            val app: Context = dialog.context.applicationContext ?: dialog.context
                             if (!VolumeInjector.ready) VolumeInjector.init(app)
-                            if (!VolumeInjector.ready) return      // init failed -> keep stock panel
+                            if (!VolumeInjector.ready) {
+                                logOnce("init NOT ready -> stock dialog kept")
+                                return
+                            }
                             param.setResult(null)                  // cancel the stock dialog
+                            logOnce("stock dialog cancelled, pill takes over")
                             VolumeInjector.requestShow()
                         } catch (t: Throwable) {
                             XposedBridge.log("iOSVolume: dialog hook error: $t")
@@ -82,7 +87,7 @@ class MainHook : IXposedHookLoadPackage {
                             logOnce("addView $name type=${lp.type} title=$title")
                             if (!isVolumeWindow(view, lp)) return
 
-                            val app = view.context.applicationContext as? Application ?: return
+                            val app: Context = view.context.applicationContext ?: view.context
                             if (!VolumeInjector.ready) {
                                 if (Looper.myLooper() != Looper.getMainLooper()) {
                                     Handler(Looper.getMainLooper()).post { VolumeInjector.init(app) }
@@ -90,7 +95,10 @@ class MainHook : IXposedHookLoadPackage {
                                 }
                                 VolumeInjector.init(app)
                             }
-                            if (!VolumeInjector.ready) return      // init failed -> keep stock panel
+                            if (!VolumeInjector.ready) {
+                                logOnce("addView: init NOT ready -> stock window kept")
+                                return
+                            }
 
                             hideStock(lp)   // fully transparent + no touches
                             logOnce("hid stock volume window $name")
