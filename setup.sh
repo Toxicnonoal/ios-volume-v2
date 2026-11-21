@@ -104,6 +104,9 @@ public abstract class XC_MethodHook {
     public XC_MethodHook() {}
     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
     protected void afterHookedMethod(MethodHookParam param) throws Throwable {}
+    public class Unhook {
+        public void unhook() {}
+    }
     public static class MethodHookParam {
         public java.lang.reflect.Member method;
         public Object thisObject;
@@ -127,7 +130,7 @@ X
 cat > "$S/XposedHelpers.java" <<'X'
 package de.robv.android.xposed;
 public final class XposedHelpers {
-    public static Object findAndHookMethod(Class<?> clazz, String methodName, Object... parameterTypesAndCallback) { return null; }
+    public static XC_MethodHook.Unhook findAndHookMethod(Class<?> clazz, String methodName, Object... parameterTypesAndCallback) { return null; }
 }
 X
 
