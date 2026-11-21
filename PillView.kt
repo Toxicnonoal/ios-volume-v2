@@ -207,6 +207,14 @@ class PillView(ctx: Context) : View(ctx) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        try {
+            drawPill(canvas)
+        } catch (e: Throwable) {
+            // never crash SystemUI because of a drawing error
+        }
+    }
+
+    private fun drawPill(canvas: Canvas) {
         ensureBlur()
 
         val w = lerp(THIN_W, FULL_W, grow) * d
@@ -217,13 +225,20 @@ class PillView(ctx: Context) : View(ctx) {
         val r = w / 2f
 
         // 1) frosted background
-        blurDrawable?.let { b ->
-            b.setBounds(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt())
+        // BackgroundBlurDrawable crashes SystemUI on a software canvas -> hardware only, and never throw
+        val blur = blurDrawable
+        if (blur != null && !canvas.isHardwareAccelerated) {
+            blurDrawable = null              // software window: no blur, use the flat track colour
+            updateTrackColor()
+        } else if (blur != null) {
             try {
-                blurSetCorner?.invoke(b, r)
+                blur.setBounds(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt())
+                blurSetCorner?.invoke(blur, r)
+                blur.draw(canvas)
             } catch (e: Throwable) {
+                blurDrawable = null          // give up on blur, keep the flat track
+                updateTrackColor()
             }
-            b.draw(canvas)
         }
         canvas.drawRoundRect(rect, r, r, trackPaint)
 
