@@ -20,10 +20,10 @@ import kotlin.math.roundToInt
 object VolumeInjector {
 
     // ---- Timing (ms) – iOS: HUD appears wide, collapses to a thin bar, then leaves ----
-    private const val SHRINK_AFTER = 1100L
-    private const val HIDE_AFTER = 2600L
-    private const val SHOW_MS = 280L
-    private const val HIDE_MS = 220L
+    private const val SHRINK_AFTER = 350L
+    private const val HIDE_AFTER = 2400L
+    private const val SHOW_MS = 260L
+    private const val HIDE_MS = 240L
 
     // ---- Position (dp) ----
     private const val SLIDE_DP = 14f      // slide distance on show/hide (towards the left edge)
@@ -78,8 +78,8 @@ object VolumeInjector {
                     audio.setStreamVolume(stream, (max * v).roundToInt(), 0)
                 }
                 onActivity = {
-                    pill.expand()
-                    scheduleHide()
+                    pill.expand()               // touching the bar widens it (iOS)
+                    scheduleHide(900L)          // stay wide a bit after the finger leaves
                 }
             }
             val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
@@ -132,10 +132,12 @@ object VolumeInjector {
     private fun show() {
         pill.animate().cancel()
         if (!shown) {
+            // iOS: pops in already WIDE (slides in from the edge, height grows), then collapses to thin
+            pill.snapWide()
             pill.alpha = 0f
             pill.translationX = -dp(SLIDE_DP).toFloat()
-            pill.scaleX = 0.92f
-            pill.scaleY = 0.92f
+            pill.scaleX = 0.9f
+            pill.scaleY = 0.78f
             try {
                 wm.addView(pill, params(2020))      // TYPE_VOLUME_OVERLAY
                 shown = true
@@ -147,16 +149,25 @@ object VolumeInjector {
                     XposedBridge.log("iOSVolume: addView failed: $t2")
                 }
             }
+            pill.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(SHOW_MS)
+                .setInterpolator(easeOut)
+                .start()
+        } else {
+            // already visible (thin): just keep it, the fill animates to the new level - no re-expand
+            pill.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(120L)
+                .setInterpolator(easeOut)
+                .start()
         }
-        pill.expand()
-        pill.animate()
-            .alpha(1f)
-            .translationX(0f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(SHOW_MS)
-            .setInterpolator(easeOut)
-            .start()
         scheduleHide()
     }
 
@@ -183,10 +194,10 @@ object VolumeInjector {
             .start()
     }
 
-    private fun scheduleHide() {
+    private fun scheduleHide(shrinkAfter: Long = SHRINK_AFTER) {
         handler.removeCallbacks(shrinkRunnable)
         handler.removeCallbacks(hideRunnable)
-        handler.postDelayed(shrinkRunnable, SHRINK_AFTER)
+        handler.postDelayed(shrinkRunnable, shrinkAfter)
         handler.postDelayed(hideRunnable, HIDE_AFTER)
     }
 }

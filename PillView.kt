@@ -26,17 +26,17 @@ class PillView(ctx: Context) : View(ctx) {
 
     companion object {
         // ---- Shape (dp) ----
-        const val FULL_W = 30f      // expanded capsule width
+        const val FULL_W = 38f      // expanded capsule width
         const val FULL_H = 150f     // expanded capsule height
-        const val THIN_W = 6f       // thin-bar width
-        const val THIN_H = 138f     // thin-bar height
+        const val THIN_W = 9f       // thin-bar width
+        const val THIN_H = 150f     // thin-bar height
         const val PAD = 8f          // gap between screen edge and capsule
         const val VIEW_W = PAD + FULL_W + 16f   // window width (extra = touch margin)
         const val VIEW_H = FULL_H + 24f         // window height
 
         // ---- Motion (ms) ----
-        const val EXPAND_MS = 320L
-        const val SHRINK_MS = 380L
+        const val EXPAND_MS = 300L
+        const val SHRINK_MS = 260L
         const val LEVEL_MS = 300L
 
         // ---- Material ----
@@ -117,6 +117,14 @@ class PillView(ctx: Context) : View(ctx) {
     // ------------------------------------------------------- expand / shrink
 
     fun expand() = animateGrow(1f, EXPAND_MS, true)
+
+    /** iOS: the HUD appears already wide (no thin -> wide growth) and only then collapses. */
+    fun snapWide() {
+        growAnim?.cancel()
+        grow = 1f
+        growTarget = 1f
+        invalidate()
+    }
 
     fun shrink() {
         if (!dragging) animateGrow(0f, SHRINK_MS, false)
