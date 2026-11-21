@@ -2,6 +2,11 @@ package app.iosvolume.module
 
 import android.app.Application
 import android.app.Dialog
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -9,14 +14,30 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 /**
- * Entry point. Runs inside com.android.systemui only.
- * Intercepts the stock volume dialog (Dialog.show) and shows the iOS pill instead.
- * If anything fails, the stock panel is left alone.
+ * Entry point (SystemUI only).
+ * Two hooks:
+ *  1) Dialog.show      -> AOSP-style volume dialogs
+ *  2) WindowManagerImpl.addView -> ROMs (HyperOS/MIUI) that add the volume panel as a plain window.
+ *     The stock window is made fully transparent + untouchable, and our pill is shown instead.
+ * Every new class/window name is logged once ("iOSVolume: ...") for diagnosis.
  */
 class MainHook : IXposedHookLoadPackage {
 
+    private val seen = HashSet<String>()
+
+    private fun logOnce(msg: String) {
+        val fresh = synchronized(seen) { seen.add(msg) }
+        if (fresh) XposedBridge.log("iOSVolume: $msg")
+    }
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         if (lpparam.packageName != "com.android.systemui") return
+        hookDialog()
+        hookAddView()
+    }
+
+    // ------------------------------------------------------------ Dialog.show
+    private fun hookDialog() {
         try {
             XposedHelpers.findAndHookMethod(
                 Dialog::class.java, "show",
@@ -24,33 +45,99 @@ class MainHook : IXposedHookLoadPackage {
                     override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
                         try {
                             val dialog = param.thisObject as? Dialog ?: return
-                            if (!isVolumeDialog(dialog)) return
+                            val type = try { dialog.window?.attributes?.type } catch (e: Throwable) { null }
+                            logOnce("dialog ${dialog.javaClass.name} type=$type")
+                            if (!isVolumeName(dialog.javaClass.name) && type != 2020) return
                             val app = dialog.context.applicationContext as? Application ?: return
                             if (!VolumeInjector.ready) VolumeInjector.init(app)
                             if (!VolumeInjector.ready) return      // init failed -> keep stock panel
                             param.setResult(null)                  // cancel the stock dialog
                             VolumeInjector.requestShow()
                         } catch (t: Throwable) {
-                            XposedBridge.log("iOSVolume: hook error: $t")
+                            XposedBridge.log("iOSVolume: dialog hook error: $t")
                         }
                     }
                 }
             )
             XposedBridge.log("iOSVolume: hooked Dialog.show in SystemUI")
         } catch (t: Throwable) {
-            XposedBridge.log("iOSVolume: hook failed: $t")
+            XposedBridge.log("iOSVolume: Dialog hook failed: $t")
         }
     }
 
-    private fun isVolumeDialog(d: Dialog): Boolean {
-        val name = d.javaClass.name
-        if (name.contains("Warning", ignoreCase = true)) return false
-        if (name.contains("Volume", ignoreCase = true)) return true
-        // fallback for ROMs with a differently named class: window type TYPE_VOLUME_OVERLAY
-        return try {
-            d.window?.attributes?.type == 2020
-        } catch (e: Throwable) {
-            false
+    // ------------------------------------------------------- WindowManager.addView
+    private fun hookAddView() {
+        try {
+            val wmImpl = Class.forName("android.view.WindowManagerImpl")
+            XposedHelpers.findAndHookMethod(
+                wmImpl, "addView", View::class.java, ViewGroup.LayoutParams::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
+                        try {
+                            val view = param.args[0] as? View ?: return
+                            val lp = param.args[1] as? WindowManager.LayoutParams ?: return
+                            if (view is PillView) return           // our own window
+                            val name = view.javaClass.name
+                            val title = lp.title?.toString() ?: ""
+                            logOnce("addView $name type=${lp.type} title=$title")
+                            if (!isVolumeWindow(view, lp)) return
+
+                            val app = view.context.applicationContext as? Application ?: return
+                            if (!VolumeInjector.ready) {
+                                if (Looper.myLooper() != Looper.getMainLooper()) {
+                                    Handler(Looper.getMainLooper()).post { VolumeInjector.init(app) }
+                                    return
+                                }
+                                VolumeInjector.init(app)
+                            }
+                            if (!VolumeInjector.ready) return      // init failed -> keep stock panel
+
+                            hideStock(lp)   // fully transparent + no touches
+                            logOnce("hid stock volume window $name")
+                            VolumeInjector.requestShow()
+                        } catch (t: Throwable) {
+                            XposedBridge.log("iOSVolume: addView hook error: $t")
+                        }
+                    }
+                }
+            )
+            XposedHelpers.findAndHookMethod(
+                wmImpl, "updateViewLayout", View::class.java, ViewGroup.LayoutParams::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
+                        try {
+                            if (!VolumeInjector.ready) return
+                            val view = param.args[0] as? View ?: return
+                            val lp = param.args[1] as? WindowManager.LayoutParams ?: return
+                            if (isVolumeWindow(view, lp)) hideStock(lp)
+                        } catch (t: Throwable) {
+                            XposedBridge.log("iOSVolume: updateViewLayout hook error: $t")
+                        }
+                    }
+                }
+            )
+            XposedBridge.log("iOSVolume: hooked addView in SystemUI")
+        } catch (t: Throwable) {
+            XposedBridge.log("iOSVolume: addView hook failed: $t")
         }
+    }
+
+    private fun isVolumeWindow(view: View, lp: WindowManager.LayoutParams): Boolean {
+        if (view is PillView) return false
+        val title = lp.title?.toString() ?: ""
+        return isVolumeName(view.javaClass.name) || title.contains("Volume", true) || lp.type == 2020
+    }
+
+    private fun hideStock(lp: WindowManager.LayoutParams) {
+        lp.alpha = 0f
+        lp.flags = lp.flags or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+    }
+
+    private fun isVolumeName(name: String): Boolean {
+        if (name.startsWith("app.iosvolume")) return false
+        if (name.contains("Warning", ignoreCase = true)) return false
+        return name.contains("Volume", ignoreCase = true)
     }
 }
