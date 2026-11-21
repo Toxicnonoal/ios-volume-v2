@@ -47,7 +47,7 @@ class MainHook : IXposedHookLoadPackage {
                             val dialog = param.thisObject as? Dialog ?: return
                             val type = try { dialog.window?.attributes?.type } catch (e: Throwable) { null }
                             logOnce("dialog ${dialog.javaClass.name} type=$type")
-                            if (!isVolumeName(dialog.javaClass.name) && type != 2020) return
+                            if (!isVolumeName(dialog.javaClass.name)) return   // class name only: window type 2020 is also used by the power menu
                             logOnce("volume dialog matched: ${dialog.javaClass.name}")
                             val app: Context = dialog.context.applicationContext ?: dialog.context
                             if (!VolumeInjector.ready) VolumeInjector.init(app)
@@ -133,7 +133,7 @@ class MainHook : IXposedHookLoadPackage {
     private fun isVolumeWindow(view: View, lp: WindowManager.LayoutParams): Boolean {
         if (view is PillView) return false
         val title = lp.title?.toString() ?: ""
-        return isVolumeName(view.javaClass.name) || title.contains("Volume", true) || lp.type == 2020
+        return isVolumeName(view.javaClass.name) || title.contains("Volume", true)
     }
 
     private fun hideStock(lp: WindowManager.LayoutParams) {
