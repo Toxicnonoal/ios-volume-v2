@@ -21,7 +21,7 @@ object VolumeInjector {
 
     // ---- Timing (ms) – iOS: HUD appears wide, collapses to a thin bar, then leaves ----
     private const val SHRINK_AFTER = 350L
-    private const val HIDE_AFTER = 2400L
+    private const val DEFAULT_HIDE = 2400L
     private const val SHOW_MS = 260L
     private const val HIDE_MS = 240L
 
@@ -37,6 +37,12 @@ object VolumeInjector {
     private val handler = Handler(Looper.getMainLooper())
     private var shown = false
     private var stream = AudioManager.STREAM_MUSIC
+
+    // ---- user settings (changed from the module's settings screen) ----
+    private const val ACTION_APPLY = "app.iosvolume.module.APPLY"
+    private const val ACTION_PREVIEW = "app.iosvolume.module.PREVIEW"
+    private var side = 0                 // 0 = left, 1 = right
+    private var hideAfter = DEFAULT_HIDE
 
     @Volatile
     var ready = false
@@ -64,6 +70,64 @@ object VolumeInjector {
         }
     }
 
+    private val settingsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            try {
+                when (i.action) {
+                    ACTION_APPLY -> applySettings(
+                        i.getIntExtra("style", 0),
+                        i.getIntExtra("side", 0),
+                        i.getIntExtra("hide", DEFAULT_HIDE.toInt()).toLong(),
+                        true
+                    )
+                    ACTION_PREVIEW -> requestShow()
+                }
+            } catch (t: Throwable) {
+                XposedBridge.log("iOSVolume: settings error: $t")
+            }
+        }
+    }
+
+    private fun applySettings(style: Int, sideValue: Int, hideMs: Long, save: Boolean) {
+        val newSide = if (sideValue == 1) 1 else 0
+        val sideChanged = newSide != side
+        side = newSide
+        hideAfter = hideMs.coerceIn(800L, 8000L)
+        pill.setStyle(style)
+        pill.onRight = side == 1
+        if (sideChanged && shown) forceRemove()   // re-added on the new edge at the next show
+        if (save) {
+            try {
+                app.getSharedPreferences("iosvol_settings", 0).edit()
+                    .putInt("style", style).putInt("side", side).putLong("hide", hideAfter).apply()
+            } catch (t: Throwable) {
+                XposedBridge.log("iOSVolume: saving settings failed: $t")
+            }
+        }
+    }
+
+    private fun loadSettings() {
+        try {
+            val sp = app.getSharedPreferences("iosvol_settings", 0)
+            applySettings(sp.getInt("style", 0), sp.getInt("side", 0), sp.getLong("hide", DEFAULT_HIDE), false)
+        } catch (t: Throwable) {
+            XposedBridge.log("iOSVolume: loading settings failed: $t")
+        }
+    }
+
+    private fun forceRemove() {
+        handler.removeCallbacks(shrinkRunnable)
+        handler.removeCallbacks(hideRunnable)
+        pill.animate().cancel()
+        try {
+            wm.removeView(pill)
+        } catch (e: Throwable) {
+        }
+        shown = false
+    }
+
+    private fun dir(): Float = if (side == 1) 1f else -1f
+
     private fun dp(v: Float): Int = (v * app.resources.displayMetrics.density).toInt()
 
     fun init(application: Context) {
@@ -88,6 +152,15 @@ object VolumeInjector {
             } else {
                 app.registerReceiver(receiver, filter)
             }
+            val sf = IntentFilter()
+            sf.addAction(ACTION_APPLY)
+            sf.addAction(ACTION_PREVIEW)
+            if (Build.VERSION.SDK_INT >= 33) {
+                app.registerReceiver(settingsReceiver, sf, Context.RECEIVER_EXPORTED)
+            } else {
+                app.registerReceiver(settingsReceiver, sf)
+            }
+            loadSettings()
             updateLevel(animate = false)   // start from the real volume, no fill-up animation
             ready = true
             XposedBridge.log("iOSVolume: injector ready")
@@ -121,8 +194,8 @@ object VolumeInjector {
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         )
-        // LEFT (not START) so it stays on the left edge on RTL devices too
-        lp.gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL
+        // LEFT/RIGHT (not START/END) so the side does not flip on RTL devices
+        lp.gravity = (if (side == 1) Gravity.RIGHT else Gravity.LEFT) or Gravity.CENTER_VERTICAL
         lp.x = 0
         lp.y = -dp(Y_SHIFT_DP)
         lp.title = "iOSPill"
@@ -135,7 +208,7 @@ object VolumeInjector {
             // iOS: pops in already WIDE (slides in from the edge, height grows), then collapses to thin
             pill.snapWide()
             pill.alpha = 0f
-            pill.translationX = -dp(SLIDE_DP).toFloat()
+            pill.translationX = dir() * dp(SLIDE_DP)
             pill.scaleX = 0.9f
             pill.scaleY = 0.78f
             try {
@@ -179,7 +252,7 @@ object VolumeInjector {
         }
         pill.animate()
             .alpha(0f)
-            .translationX(-dp(SLIDE_DP).toFloat())
+            .translationX(dir() * dp(SLIDE_DP))
             .scaleX(0.94f)
             .scaleY(0.94f)
             .setDuration(HIDE_MS)
@@ -198,6 +271,6 @@ object VolumeInjector {
         handler.removeCallbacks(shrinkRunnable)
         handler.removeCallbacks(hideRunnable)
         handler.postDelayed(shrinkRunnable, shrinkAfter)
-        handler.postDelayed(hideRunnable, HIDE_AFTER)
+        handler.postDelayed(hideRunnable, hideAfter)
     }
 }

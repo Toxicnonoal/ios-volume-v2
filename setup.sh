@@ -5,7 +5,7 @@ set -euo pipefail
 P=app/src/main/java/app/iosvolume/module
 S=xposedapi/src/main/java/de/robv/android/xposed
 mkdir -p "$P" app/src/main/assets app/src/main/res/values "$S/callbacks"
-cp MainHook.kt PillView.kt VolumeInjector.kt "$P/"
+cp MainHook.kt PillView.kt VolumeInjector.kt SettingsActivity.kt "$P/"
 
 cat > settings.gradle.kts <<'X'
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -50,7 +50,14 @@ X
 cat > app/src/main/AndroidManifest.xml <<'X'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="iOS Volume" android:allowBackup="false">
+    <application android:label="iOS Volume" android:allowBackup="false"
+        android:theme="@android:style/Theme.DeviceDefault.DayNight">
+        <activity android:name=".SettingsActivity" android:exported="true" android:label="iOS Volume">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription" android:value="iOS-style volume HUD" />
         <meta-data android:name="xposedminversion" android:value="93" />

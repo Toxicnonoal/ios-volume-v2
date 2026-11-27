@@ -51,6 +51,16 @@ class PillView(ctx: Context) : View(ctx) {
         private set
     var dragging: Boolean = false
         private set
+    /** 0 = iOS classic, 1 = glass, 2 = dark + blue accent */
+    var themeStyle: Int = 0
+        private set
+    /** true = capsule hugs the right edge instead of the left one */
+    var onRight: Boolean = false
+        set(v) {
+            field = v
+            updatePivot()
+            invalidate()
+        }
     var onLevelChanged: ((Float) -> Unit)? = null
     var onActivity: (() -> Unit)? = null
 
@@ -70,6 +80,8 @@ class PillView(ctx: Context) : View(ctx) {
     private val speaker = Path()
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.style = Paint.Style.STROKE }
+    private val rect2 = RectF()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL_AND_STROKE
@@ -157,15 +169,33 @@ class PillView(ctx: Context) : View(ctx) {
         updateTrackColor()
     }
 
+    fun setStyle(s: Int) {
+        themeStyle = s.coerceIn(0, 2)
+        updateTrackColor()
+        invalidate()
+    }
+
     private fun updateTrackColor() {
         val blurred = blurDrawable != null
-        trackPaint.color = when {
-            night && blurred -> Color.argb(112, 62, 62, 68)
-            night -> Color.argb(150, 58, 58, 64)
-            blurred -> Color.argb(92, 118, 118, 128)
-            else -> Color.argb(135, 112, 112, 122)
+        trackPaint.color = when (themeStyle) {
+            1 -> if (blurred) Color.argb(50, 255, 255, 255) else Color.argb(72, 255, 255, 255)
+            2 -> Color.argb(215, 18, 18, 22)
+            else -> when {
+                night && blurred -> Color.argb(112, 62, 62, 68)
+                night -> Color.argb(150, 58, 58, 64)
+                blurred -> Color.argb(92, 118, 118, 128)
+                else -> Color.argb(135, 112, 112, 122)
+            }
+        }
+        fillPaint.color = when (themeStyle) {
+            1 -> Color.argb(246, 250, 250, 255)
+            2 -> Color.rgb(10, 132, 255)
+            else -> Color.WHITE
         }
     }
+
+    private fun withAlpha(c: Int, f: Float): Int =
+        Color.argb((Color.alpha(c) * f).toInt(), Color.red(c), Color.green(c), Color.blue(c))
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -210,8 +240,12 @@ class PillView(ctx: Context) : View(ctx) {
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        pivotX = PAD * d
-        pivotY = h / 2f
+        updatePivot()
+    }
+
+    private fun updatePivot() {
+        pivotX = if (onRight) width - PAD * d else PAD * d
+        pivotY = height / 2f
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -227,7 +261,7 @@ class PillView(ctx: Context) : View(ctx) {
 
         val w = lerp(THIN_W, FULL_W, grow) * d
         val h = lerp(THIN_H, FULL_H, grow) * d
-        val left = PAD * d
+        val left = if (onRight) width - PAD * d - w else PAD * d
         val top = (height - h) / 2f
         rect.set(left, top, left + w, top + h)
         val r = w / 2f
@@ -273,15 +307,41 @@ class PillView(ctx: Context) : View(ctx) {
                 else -> 3
             }
             val muted = shownLevel <= 0.001f
-            // white glyph over the empty (gray) part ...
-            drawGlyph(canvas, cx, cy, u, waves, muted, Color.argb((255 * glyphAlpha).toInt(), 255, 255, 255))
-            // ... and dark gray glyph over the white fill
+            val overEmpty = when (themeStyle) {
+                1 -> Color.argb(215, 255, 255, 255)
+                else -> Color.argb(255, 255, 255, 255)
+            }
+            val overFill = when (themeStyle) {
+                1 -> Color.argb(225, 70, 70, 95)
+                2 -> Color.argb(255, 255, 255, 255)
+                else -> Color.argb(200, 60, 60, 67)
+            }
+            // glyph over the empty part ...
+            drawGlyph(canvas, cx, cy, u, waves, muted, withAlpha(overEmpty, glyphAlpha))
+            // ... and a second colour over the filled part
             canvas.save()
             canvas.clipRect(fillRect)
-            drawGlyph(canvas, cx, cy, u, waves, muted, Color.argb((200 * glyphAlpha).toInt(), 60, 60, 67))
+            drawGlyph(canvas, cx, cy, u, waves, muted, withAlpha(overFill, glyphAlpha))
             canvas.restore()
         }
         canvas.restore()
+
+        // 4) outline: glass gets a bright rim with a faint dark hairline, dark theme a soft rim
+        if (themeStyle == 1) {
+            strokePaint.color = Color.argb(38, 0, 0, 0)
+            strokePaint.strokeWidth = 1f * d
+            canvas.drawRoundRect(rect, r, r, strokePaint)
+            val inset = 0.9f * d
+            rect2.set(rect)
+            rect2.inset(inset, inset)
+            strokePaint.color = Color.argb(165, 255, 255, 255)
+            strokePaint.strokeWidth = 1.3f * d
+            canvas.drawRoundRect(rect2, (r - inset).coerceAtLeast(0f), (r - inset).coerceAtLeast(0f), strokePaint)
+        } else if (themeStyle == 2) {
+            strokePaint.color = Color.argb(45, 255, 255, 255)
+            strokePaint.strokeWidth = 1f * d
+            canvas.drawRoundRect(rect, r, r, strokePaint)
+        }
     }
 
     /** SF-Symbols-like speaker: filled cone + up to 3 arcs, or a slash when muted. */

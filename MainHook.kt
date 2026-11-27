@@ -1,5 +1,6 @@
 package app.iosvolume.module
 
+import android.app.Application
 import android.content.Context
 import android.app.Dialog
 import android.os.Handler
@@ -34,6 +35,28 @@ class MainHook : IXposedHookLoadPackage {
         if (lpparam.packageName != "com.android.systemui") return
         hookDialog()
         hookAddView()
+        // main SystemUI process only: start the injector early so the settings screen works right away
+        if (lpparam.processName == "com.android.systemui") hookAppCreate()
+    }
+
+    private fun hookAppCreate() {
+        try {
+            XposedHelpers.findAndHookMethod(
+                Application::class.java, "onCreate",
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
+                        try {
+                            val ctx = param.thisObject as? Context ?: return
+                            if (!VolumeInjector.ready) VolumeInjector.init(ctx)
+                        } catch (t: Throwable) {
+                            XposedBridge.log("iOSVolume: early init error: $t")
+                        }
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            XposedBridge.log("iOSVolume: Application hook failed: $t")
+        }
     }
 
     // ------------------------------------------------------------ Dialog.show
