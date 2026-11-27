@@ -53,6 +53,10 @@ class SettingsActivity : Activity() {
         addGroup(root, "تم", listOf("آیفون کلاسیک", "شیشه‌ای (Liquid Glass)", "تیره با پر آبی"), "style", 0)
         addGroup(root, "سمت صفحه", listOf("چپ", "راست"), "side", 0)
         addGroup(root, "مدت نمایش", listOf("کوتاه (۱٫۵ ثانیه)", "معمولی (۲٫۴ ثانیه)", "بلند (۴ ثانیه)"), "hide", 1)
+        addGroup(root, "اندازه", listOf("کوچک", "معمولی", "بزرگ"), "size", 1)
+        addGroup(root, "رنگ پر (فقط تم تیره)", listOf("آبی", "سبز", "نارنجی", "صورتی", "بنفش", "سفید"), "accent", 0)
+        addGroup(root, "لرزش موقع کشیدن", listOf("روشن", "خاموش"), "haptic", 0)
+        addGroup(root, "آیکون بر اساس نوع صدا (زنگ، آلارم)", listOf("روشن", "خاموش"), "icons", 0)
 
         val preview = Button(this)
         preview.text = "پیش‌نمایش"
@@ -115,6 +119,10 @@ class SettingsActivity : Activity() {
         i.putExtra("style", prefs.getInt("style", 0))
         i.putExtra("side", prefs.getInt("side", 0))
         i.putExtra("hide", hideMs[prefs.getInt("hide", 1).coerceIn(0, hideMs.size - 1)])
+        i.putExtra("size", prefs.getInt("size", 1))
+        i.putExtra("accent", prefs.getInt("accent", 0))
+        i.putExtra("haptic", if (prefs.getInt("haptic", 0) == 0) 1 else 0)
+        i.putExtra("icons", if (prefs.getInt("icons", 0) == 0) 1 else 0)
         sendBroadcast(i)
     }
 }

@@ -61,6 +61,16 @@ class PillView(ctx: Context) : View(ctx) {
             updatePivot()
             invalidate()
         }
+    /** overall size multiplier (0.85 / 1.0 / 1.2) */
+    var sizeScale: Float = 1f
+        set(v) {
+            field = v
+            invalidate()
+        }
+    /** 0 = speaker, 1 = bell (ring / notification), 2 = alarm clock */
+    var iconKind: Int = 0
+        private set
+    private var accentColor: Int = Color.rgb(10, 132, 255)
     var onLevelChanged: ((Float) -> Unit)? = null
     var onActivity: (() -> Unit)? = null
 
@@ -78,6 +88,7 @@ class PillView(ctx: Context) : View(ctx) {
     private val arcRect = RectF()
     private val clip = Path()
     private val speaker = Path()
+    private val bellPath = Path()
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.style = Paint.Style.STROKE }
@@ -169,6 +180,20 @@ class PillView(ctx: Context) : View(ctx) {
         updateTrackColor()
     }
 
+    fun setAccent(c: Int) {
+        accentColor = c
+        updateTrackColor()
+        invalidate()
+    }
+
+    fun setIconType(t: Int) {
+        val n = t.coerceIn(0, 2)
+        if (n != iconKind) {
+            iconKind = n
+            invalidate()
+        }
+    }
+
     fun setStyle(s: Int) {
         themeStyle = s.coerceIn(0, 2)
         updateTrackColor()
@@ -189,7 +214,7 @@ class PillView(ctx: Context) : View(ctx) {
         }
         fillPaint.color = when (themeStyle) {
             1 -> Color.argb(246, 250, 250, 255)
-            2 -> Color.rgb(10, 132, 255)
+            2 -> accentColor
             else -> Color.WHITE
         }
     }
@@ -259,8 +284,8 @@ class PillView(ctx: Context) : View(ctx) {
     private fun drawPill(canvas: Canvas) {
         ensureBlur()
 
-        val w = lerp(THIN_W, FULL_W, grow) * d
-        val h = lerp(THIN_H, FULL_H, grow) * d
+        val w = lerp(THIN_W, FULL_W, grow) * d * sizeScale
+        val h = lerp(THIN_H, FULL_H, grow) * d * sizeScale
         val left = if (onRight) width - PAD * d - w else PAD * d
         val top = (height - h) / 2f
         rect.set(left, top, left + w, top + h)
@@ -351,6 +376,15 @@ class PillView(ctx: Context) : View(ctx) {
         wavePaint.color = color
         wavePaint.strokeWidth = 0.085f * u
 
+        if (iconKind == 1) {
+            drawBell(c, cx, cy, u, muted)
+            return
+        }
+        if (iconKind == 2) {
+            drawAlarm(c, cx, cy, u, muted)
+            return
+        }
+
         speaker.reset()
         speaker.moveTo(cx - 0.50f * u, cy - 0.17f * u)
         speaker.lineTo(cx - 0.33f * u, cy - 0.17f * u)
@@ -371,6 +405,36 @@ class PillView(ctx: Context) : View(ctx) {
         }
     }
 
+    /** Bell for ring / notification volume. */
+    private fun drawBell(c: Canvas, cx: Float, cy: Float, u: Float, muted: Boolean) {
+        bellPath.reset()
+        bellPath.moveTo(cx - 0.42f * u, cy + 0.26f * u)
+        bellPath.cubicTo(cx - 0.30f * u, cy + 0.20f * u, cx - 0.28f * u, cy + 0.05f * u, cx - 0.28f * u, cy - 0.08f * u)
+        bellPath.cubicTo(cx - 0.28f * u, cy - 0.30f * u, cx + 0.28f * u, cy - 0.30f * u, cx + 0.28f * u, cy - 0.08f * u)
+        bellPath.cubicTo(cx + 0.28f * u, cy + 0.05f * u, cx + 0.30f * u, cy + 0.20f * u, cx + 0.42f * u, cy + 0.26f * u)
+        bellPath.close()
+        c.drawPath(bellPath, bodyPaint)
+        c.drawCircle(cx, cy + 0.38f * u, 0.09f * u, bodyPaint)
+        c.drawCircle(cx, cy - 0.33f * u, 0.06f * u, bodyPaint)
+        if (muted) {
+            c.drawLine(cx - 0.45f * u, cy - 0.38f * u, cx + 0.45f * u, cy + 0.42f * u, wavePaint)
+        }
+    }
+
+    /** Alarm clock for the alarm volume. */
+    private fun drawAlarm(c: Canvas, cx: Float, cy: Float, u: Float, muted: Boolean) {
+        val oy = cy + 0.04f * u
+        arcRect.set(cx - 0.34f * u, oy - 0.34f * u, cx + 0.34f * u, oy + 0.34f * u)
+        c.drawArc(arcRect, 0f, 360f, false, wavePaint)
+        c.drawLine(cx, oy, cx, oy - 0.18f * u, wavePaint)
+        c.drawLine(cx, oy, cx + 0.15f * u, oy + 0.09f * u, wavePaint)
+        c.drawCircle(cx - 0.36f * u, cy - 0.34f * u, 0.10f * u, bodyPaint)
+        c.drawCircle(cx + 0.36f * u, cy - 0.34f * u, 0.10f * u, bodyPaint)
+        if (muted) {
+            c.drawLine(cx - 0.45f * u, cy - 0.38f * u, cx + 0.45f * u, cy + 0.42f * u, wavePaint)
+        }
+    }
+
     // ----------------------------------------------------------------- touch
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -384,7 +448,7 @@ class PillView(ctx: Context) : View(ctx) {
                 expand()
             }
             MotionEvent.ACTION_MOVE -> if (dragging) {
-                val span = FULL_H * d
+                val span = FULL_H * d * sizeScale
                 val v = (dragStartLevel + (dragStartY - e.y) / span).coerceIn(0f, 1f)
                 updateLevel(v, false)
                 onLevelChanged?.invoke(level)

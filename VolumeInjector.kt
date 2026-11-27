@@ -5,12 +5,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.PathInterpolator
@@ -43,6 +45,22 @@ object VolumeInjector {
     private const val ACTION_PREVIEW = "app.iosvolume.module.PREVIEW"
     private var side = 0                 // 0 = left, 1 = right
     private var hideAfter = DEFAULT_HIDE
+    private var haptic = true
+    private var iconsPerStream = true
+    private var accentIdx = 0
+    private var sizeIdx = 1
+    private var sizeScale = 1f
+    private var lastStep = -1
+
+    private val accents = intArrayOf(
+        Color.rgb(10, 132, 255),    // blue
+        Color.rgb(48, 209, 88),     // green
+        Color.rgb(255, 159, 10),    // orange
+        Color.rgb(255, 55, 95),     // pink
+        Color.rgb(191, 90, 242),    // purple
+        Color.rgb(255, 255, 255)    // white
+    )
+    private val sizes = floatArrayOf(0.85f, 1f, 1.2f)
 
     @Volatile
     var ready = false
@@ -65,6 +83,7 @@ object VolumeInjector {
                 )
             ) return
             stream = type
+            applyIcon()
             if (!pill.dragging) updateLevel(animate = true)
             show()
         }
@@ -78,6 +97,10 @@ object VolumeInjector {
                         i.getIntExtra("style", 0),
                         i.getIntExtra("side", 0),
                         i.getIntExtra("hide", DEFAULT_HIDE.toInt()).toLong(),
+                        i.getIntExtra("haptic", 1) == 1,
+                        i.getIntExtra("accent", 0),
+                        i.getIntExtra("size", 1),
+                        i.getIntExtra("icons", 1) == 1,
                         true
                     )
                     ACTION_PREVIEW -> requestShow()
@@ -88,18 +111,34 @@ object VolumeInjector {
         }
     }
 
-    private fun applySettings(style: Int, sideValue: Int, hideMs: Long, save: Boolean) {
+    private fun applySettings(
+        style: Int, sideValue: Int, hideMs: Long,
+        hapticOn: Boolean, accent: Int, size: Int, icons: Boolean,
+        save: Boolean
+    ) {
         val newSide = if (sideValue == 1) 1 else 0
-        val sideChanged = newSide != side
+        val newSizeIdx = size.coerceIn(0, sizes.size - 1)
+        val layoutChanged = newSide != side || newSizeIdx != sizeIdx
         side = newSide
+        sizeIdx = newSizeIdx
+        sizeScale = sizes[sizeIdx]
         hideAfter = hideMs.coerceIn(800L, 8000L)
+        haptic = hapticOn
+        accentIdx = accent.coerceIn(0, accents.size - 1)
+        iconsPerStream = icons
+
         pill.setStyle(style)
+        pill.setAccent(accents[accentIdx])
+        pill.sizeScale = sizeScale
         pill.onRight = side == 1
-        if (sideChanged && shown) forceRemove()   // re-added on the new edge at the next show
+        applyIcon()
+        if (layoutChanged && shown) forceRemove()   // re-added with the new size / edge at the next show
         if (save) {
             try {
                 app.getSharedPreferences("iosvol_settings", 0).edit()
-                    .putInt("style", style).putInt("side", side).putLong("hide", hideAfter).apply()
+                    .putInt("style", style).putInt("side", side).putLong("hide", hideAfter)
+                    .putBoolean("haptic", haptic).putInt("accent", accentIdx).putInt("size", sizeIdx)
+                    .putBoolean("icons", iconsPerStream).apply()
             } catch (t: Throwable) {
                 XposedBridge.log("iOSVolume: saving settings failed: $t")
             }
@@ -109,10 +148,24 @@ object VolumeInjector {
     private fun loadSettings() {
         try {
             val sp = app.getSharedPreferences("iosvol_settings", 0)
-            applySettings(sp.getInt("style", 0), sp.getInt("side", 0), sp.getLong("hide", DEFAULT_HIDE), false)
+            applySettings(
+                sp.getInt("style", 0), sp.getInt("side", 0), sp.getLong("hide", DEFAULT_HIDE),
+                sp.getBoolean("haptic", true), sp.getInt("accent", 0), sp.getInt("size", 1),
+                sp.getBoolean("icons", true), false
+            )
         } catch (t: Throwable) {
             XposedBridge.log("iOSVolume: loading settings failed: $t")
         }
+    }
+
+    /** Speaker for media/calls, bell for ring/notification, clock for alarm (if enabled). */
+    private fun applyIcon() {
+        val t = if (!iconsPerStream) 0 else when (stream) {
+            AudioManager.STREAM_RING, AudioManager.STREAM_NOTIFICATION -> 1
+            AudioManager.STREAM_ALARM -> 2
+            else -> 0
+        }
+        pill.setIconType(t)
     }
 
     private fun forceRemove() {
@@ -139,7 +192,12 @@ object VolumeInjector {
             pill = PillView(app).apply {
                 onLevelChanged = { v ->
                     val max = audio.getStreamMaxVolume(stream)
-                    audio.setStreamVolume(stream, (max * v).roundToInt(), 0)
+                    val step = (max * v).roundToInt()
+                    audio.setStreamVolume(stream, step, 0)
+                    if (haptic && step != lastStep) {
+                        if (lastStep != -1) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        lastStep = step
+                    }
                 }
                 onActivity = {
                     pill.expand()               // touching the bar widens it (iOS)
@@ -174,6 +232,7 @@ object VolumeInjector {
     fun requestShow() {
         handler.post {
             if (!ready) return@post
+            applyIcon()
             if (!pill.dragging) updateLevel(animate = true)
             show()
         }
@@ -186,8 +245,8 @@ object VolumeInjector {
 
     private fun params(type: Int): WindowManager.LayoutParams {
         val lp = WindowManager.LayoutParams(
-            dp(PillView.VIEW_W),
-            dp(PillView.VIEW_H),
+            dp(PillView.PAD + PillView.FULL_W * sizeScale + 16f),
+            dp(PillView.FULL_H * sizeScale + 24f),
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -205,6 +264,7 @@ object VolumeInjector {
     private fun show() {
         pill.animate().cancel()
         if (!shown) {
+            lastStep = -1
             // iOS: pops in already WIDE (slides in from the edge, height grows), then collapses to thin
             pill.snapWide()
             pill.alpha = 0f
